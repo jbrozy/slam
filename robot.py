@@ -12,7 +12,8 @@ class Robot:
 
         # the cell that will be extended upon moving into a direction
         # similar to the behaviour of a linked list
-        self.current_cell = self.start_cell
+        # first value is cell, second value is distance from origin(0, 0) to this cell
+        self.current_cell = (self.start_cell, 0.0)
 
         # the current rotation of the robot
         # that will be used in the move() method
@@ -23,7 +24,7 @@ class Robot:
         # a position has already been visited
         # allows for circular paths
         self.lookup = {}
-        self.lookup.append(self.current_cell)
+        self.lookup.append(self.current_cell[0])
 
     def rotate_left(self) -> None:
         match self.current_rotation:
@@ -73,8 +74,8 @@ class Robot:
         self.current_cell.down = down or Cell(self.x, self.y - 1)
 
     def move(self) -> None:
-        previous = self.current_cell
-        next_cell = Cell(self.current_cell.x, self.current_cell.y)
+        previous, previous_origin = self.current_cell
+        next_cell = Cell(previous.x, previous.y)
         if self.current_rotation == Rotation.UP:
             next_cell.y += 1
             self.current_cell.up = next_cell
