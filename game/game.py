@@ -10,121 +10,94 @@ ROTATE_SPEED = 1
 ROBOT_SPEED = 1
 SENSOR_THRESHOLD = 5
 
-
 class Robot:
     def __init__(self, screen):
-        self.x = 20
-        self.y = 20
+        self.pos = np.array([20.0, 20.0])  # Position vector [x, y]
         self.screen = screen
         self.heading = 0
         self.sensor_range = 2
-        self.map = []  # Liste für erkannte Hindernisse
-        self.exploration_state = 'exploring'  # Exploration mode
+        self.map = []  # List of obstacle coordinates as numpy arrays
+        self.exploration_state = 'exploring'
 
     def move(self, speed):
-        # Update position based on current heading and speed
-        self.x += speed * math.cos(self.heading)
-        self.y += speed * math.sin(self.heading)
+        # Calculate direction vector from heading
+        direction = np.array([math.cos(self.heading), math.sin(self.heading)])
+        self.pos += speed * direction
 
     def sense_obstacles(self):
         """Sense obstacles in a 30-degree field of view (FOV)."""
-        # Angle range: 30 degrees FOV centered around the robot's heading
-        fov_angle = math.radians(60)  # Convert 30 degrees to radians
-        start_angle = self.heading - fov_angle / 2  # Start angle (heading - 15 degrees)
-        end_angle = self.heading + fov_angle / 2    # End angle (heading + 15 degrees)
-        
-        # Number of rays to cast within the FOV (e.g., 10 rays within the 30 degrees)
+        fov_angle = math.radians(60)
+        start_angle = self.heading - fov_angle / 2
+        end_angle = self.heading + fov_angle / 2
         num_rays = 10
-        angle_step = fov_angle / num_rays  # Step between each ray
-        
-        # Cast rays at each angle in the FOV
-        for i in range(num_rays):
-            # Calculate the angle of the current ray
-            ray_angle = start_angle + i * angle_step
-            
-            # Calculate the end point of the ray
-            target_x = self.x + self.sensor_range * math.cos(ray_angle)
-            target_y = self.y + self.sensor_range * math.sin(ray_angle)
-            
-            # Detect obstacle along this ray
-            self.detect_obstacle(target_x, target_y)
-
+        # Cast rays using numpy arrays for directions
+        angles = np.linspace(start_angle, end_angle, num_rays)
+        directions = np.column_stack((np.cos(angles), np.sin(angles)))
+        for direction in directions:
+            target_pos = self.pos + self.sensor_range * direction
+            self.detect_obstacle(target_pos)
 
     def rotate(self, angle):
-        self.heading += angle
-        self.heading %= 2 * math.pi
+        self.heading = (self.heading + angle) % (2 * math.pi)
 
     def draw(self):
-        color = (255, 255, 255)  # Weißer Roboter
-        pygame.draw.circle(self.screen, color, (int(self.x), int(self.y)), 10)
-        end_x = self.x + 20 * math.cos(self.heading)
-        end_y = self.y + 20 * math.sin(self.heading)
-        # Richtungslinie
-        pygame.draw.line(self.screen, color, (self.x, self.y), (end_x, end_y), 2)
+        color = (255, 255, 255)
+        pos_int = self.pos.astype(int)
+        pygame.draw.circle(self.screen, color, pos_int, 10)
+        # Calculate end point for heading indicator
+        direction = np.array([math.cos(self.heading), math.sin(self.heading)])
+        end_pos = self.pos + 20 * direction
+        end_pos_int = end_pos.astype(int)
+        pygame.draw.line(self.screen, color, pos_int, end_pos_int, 2)
 
-    def detect_obstacle(self, target_x, target_y):
-        x = self.x
-        y = self.y
-
-        dx = abs(target_x - x)
-        dy = abs(target_y - y)
-        sx = 1 if target_x > x else -1
-        sy = 1 if target_y > y else -1
-
-        err = dx - dy
-
+    def detect_obstacle(self, target_pos):
+        current_pos = self.pos.copy()
+        target_pos = np.array(target_pos)
+        # Calculate direction and distance
+        delta = np.abs(target_pos - current_pos)
+        step = np.sign(target_pos - current_pos)
+        # Bresenham's line algorithm with numpy
+        err = delta[0] - delta[1]
         while True:
-            r_x, r_y = int(round(x)), int(round(y))
+            pos_int = np.round(current_pos).astype(int)
+            # Check bounds
+            if not (0 <= pos_int[0] < 800 and 0 <= pos_int[1] < 600):
+                return False
 
-            # Check if we are outside of the valid range (in the range [0, 799] for x, and [0, 599] for y)
-            if r_x < 0 or r_y < 0 or r_x >= 800 or r_y >= 600:
-                return False  # Outside screen bounds
-
-            pixel_color = self.screen.get_at((r_x, r_y))
-            # Debugging: print the pixel color
-
-            # Check if the pixel color is close to white (tolerance of 10)
+            # Get pixel color at current position
+            pixel_color = self.screen.get_at(pos_int)
+            # Check for white pixels (walls)
             if pixel_color == (255, 255, 255, 255):
-                self.map.append((r_x, r_y))
-                return True  # White pixel found
+                self.map.append(pos_int)
+                return True
 
-            if x == target_x and y == target_y:
+            if np.array_equal(current_pos, target_pos):
                 break
 
             e2 = 2 * err
-            if e2 > -dy:
-                err -= dy
-                x += sx * self.sensor_range
-            if e2 < dx:
-                err += dx
-                y += sy * self.sensor_range
+            if e2 > -delta[1]:
+                err -= delta[1]
+                current_pos[0] += step[0] * self.sensor_range
+            if e2 < delta[0]:
+                err += delta[0]
+                current_pos[1] += step[1] * self.sensor_range
 
-        return False  # No white pixel detected
+        return False
 
-    def is_white(self, pixel_color):
-        # Tolerance for color comparison (adjust if needed)
-        tolerance = 10
-        r, g, b, a = pixel_color
-
-        # Debugging: print the RGB values
-        # print(f"Checking color: R={r}, G={g}, B={b}, A={a}")
-
-        # Ensure that we only check the RGB components and disregard the alpha channel
-        return (abs(r - 255) <= tolerance and abs(g - 255) <= tolerance and abs(b - 255) <= tolerance)
     def draw_map(self):
-        """Zeichne alle erkannten Hindernisse."""
-        for x, y in self.map:
-            pygame.draw.circle(self.screen, (255, 0, 0), (int(x), int(y)), 2)  # Rote Hindernisse
+        """Draw detected obstacles."""
+        for obstacle_pos in self.map:
+            pygame.draw.circle(self.screen, (255, 0, 0), obstacle_pos, 2)
+
     def avoid_obstacles(self):
-        """Simple logic to avoid obstacles based on detected positions."""
-        # Check for obstacles near the front
-        if len(self.map) > 0:
-            for (obstacle_x, obstacle_y) in self.map:
-                distance = math.dist((self.x, self.y), (obstacle_x, obstacle_y))
-                if distance < SENSOR_THRESHOLD:
-                    # If obstacle is close, turn
-                    self.rotate(math.pi / 2)  # Turn 90 degrees to avoid
-                    return
+        """Obstacle avoidance using numpy operations."""
+        if self.map:
+            obstacles = np.array(self.map)
+            # Calculate distances to all obstacles using numpy
+            distances = np.linalg.norm(obstacles - self.pos, axis=1)
+            if np.any(distances < SENSOR_THRESHOLD):
+                self.rotate(math.pi / 2)
+                return
 
 
 class Cell:
@@ -158,33 +131,35 @@ class Game:
         return [[Cell(i, j) for j in range(self.cols)] for i in range(self.rows)]
 
     def get_neighbors(self, cell: Cell) -> List[Cell]:
+        # Create direction vectors using numpy
+        directions = np.array([[0, -1], [1, 0], [0, 1], [-1, 0]])
         neighbors = []
-        directions = [(0, -1), (1, 0), (0, 1), (-1, 0)]  # oben, rechts, unten, links
+        cell_pos = np.array([cell.row, cell.col])
 
-        for dr, dc in directions:
-            new_row = cell.row + dr
-            new_col = cell.col + dc
-
-            if (0 <= new_row < self.rows and 0 <= new_col < self.cols and 
-                not self.grid[new_row][new_col].visited):
-                neighbors.append(self.grid[new_row][new_col])
+        for direction in directions:
+            new_pos = cell_pos + direction
+            if (0 <= new_pos[0] < self.rows and 
+                0 <= new_pos[1] < self.cols and 
+                not self.grid[new_pos[0]][new_pos[1]].visited):
+                neighbors.append(self.grid[new_pos[0]][new_pos[1]])
 
         return neighbors
 
     def remove_walls(self, current: Cell, next_cell: Cell):
-        dx = next_cell.col - current.col
-        dy = next_cell.row - current.row
-
-        if dx == 1:  # rechts
+        # Calculate cell difference using numpy
+        diff = np.array([next_cell.col - current.col, 
+                        next_cell.row - current.row])
+        
+        if diff[0] == 1:  # right
             current.walls["right"] = False
             next_cell.walls["left"] = False
-        elif dx == -1:  # links
+        elif diff[0] == -1:  # left
             current.walls["left"] = False
             next_cell.walls["right"] = False
-        elif dy == 1:  # unten
+        elif diff[1] == 1:  # down
             current.walls["bottom"] = False
             next_cell.walls["top"] = False
-        elif dy == -1:  # oben
+        elif diff[1] == -1:  # up
             current.walls["top"] = False
             next_cell.walls["bottom"] = False
 
@@ -206,33 +181,40 @@ class Game:
                 self.stack.pop()
 
     def place_colored_cells(self):
-        colors = [(0, 255, 0), (255, 165, 0), (0, 0, 255)]  # grün, orange, blau
-        available_cells = [(i, j) for i in range(self.rows) for j in range(self.cols)]
-        random_cells = random.sample(available_cells, 3)
+        colors = np.array([(0, 255, 0), (255, 165, 0), (0, 0, 255)])
+        available_cells = np.array([(i, j)
+                                  for i in range(self.rows)
+                                  for j in range(self.cols)])
+        random_indices = np.random.choice(len(available_cells),
+                                        size=3,
+                                        replace=False)
+        random_cells = available_cells[random_indices]
 
         for (row, col), color in zip(random_cells, colors):
-            self.grid[row][col].color = color
+            self.grid[row][col].color = tuple(color)
 
     def draw_cell(self, cell: Cell):
-        x = cell.col * self.cell_size
-        y = cell.row * self.cell_size
+        pos = np.array([cell.col * self.cell_size,
+                       cell.row * self.cell_size])
 
         if cell.color:
             pygame.draw.rect(self.screen, cell.color,
-                             (x + 1, y + 1, self.cell_size - 1, self.cell_size - 1))
+                           (*pos + 1, self.cell_size - 1, self.cell_size - 1))
 
         if cell.walls["top"]:
             pygame.draw.line(self.screen, (255, 255, 255),
-                             (x, y), (x + self.cell_size, y), 2)
+                           pos, pos + [self.cell_size, 0], 2)
         if cell.walls["right"]:
             pygame.draw.line(self.screen, (255, 255, 255),
-                             (x + self.cell_size, y), (x + self.cell_size, y + self.cell_size), 2)
+                           pos + [self.cell_size, 0],
+                           pos + [self.cell_size, self.cell_size], 2)
         if cell.walls["bottom"]:
             pygame.draw.line(self.screen, (255, 255, 255),
-                             (x, y + self.cell_size), (x + self.cell_size, y + self.cell_size), 2)
+                           pos + [0, self.cell_size],
+                           pos + [self.cell_size, self.cell_size], 2)
         if cell.walls["left"]:
             pygame.draw.line(self.screen, (255, 255, 255),
-                             (x, y), (x, y + self.cell_size), 2)
+                           pos, pos + [0, self.cell_size], 2)
 
     def run(self):
         while self.running:
@@ -242,15 +224,15 @@ class Game:
 
             keys = pygame.key.get_pressed()
             if keys[pygame.K_LEFT]:
-                self.robot.rotate(-ROTATE_SPEED * dt)  # Rotate left
+                self.robot.rotate(-ROTATE_SPEED * dt)
             if keys[pygame.K_RIGHT]:
-                self.robot.rotate(ROTATE_SPEED * dt)  # Rotate right
+                self.robot.rotate(ROTATE_SPEED * dt)
             if keys[pygame.K_UP]:
-                self.robot.move(ROBOT_SPEED)  # Move forward
+                self.robot.move(ROBOT_SPEED)
             if keys[pygame.K_DOWN]:
-                self.robot.move(-ROBOT_SPEED)  # Move backward
+                self.robot.move(-ROBOT_SPEED)
             if keys[pygame.K_0]:
-                print(self.robot.map)
+                print(np.array(self.robot.map))
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -272,3 +254,4 @@ class Game:
 if __name__ == "__main__":
     game = Game()
     game.run()
+
